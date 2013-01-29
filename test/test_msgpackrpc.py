@@ -71,7 +71,7 @@ class TestMessagePackRPC(unittest.TestCase):
 
     def setup_env(self):
         def _on_started():
-            self._server._loop.dettach_periodic_callback()
+            self._server._loop.detach_periodic_callback()
             lock.release()
         def _start_server(server):
             server._loop.attach_periodic_callback(_on_started, 1)

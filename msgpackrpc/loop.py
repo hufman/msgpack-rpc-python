@@ -34,12 +34,12 @@ class Loop(object):
 
     def attach_periodic_callback(self, callback, callback_time):
         if self._periodic_callback is not None:
-            self.dettach_periodic_callback()
+            self.detach_periodic_callback()
 
         self._periodic_callback = ioloop.PeriodicCallback(callback, callback_time, self._ioloop)
         self._periodic_callback.start()
 
-    def dettach_periodic_callback(self):
+    def detach_periodic_callback(self):
         if self._periodic_callback is not None:
             self._periodic_callback.stop()
         self._periodic_callback = None
