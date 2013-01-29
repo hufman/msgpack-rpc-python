@@ -14,14 +14,15 @@ class BaseSocket(object):
         self._unpacker = msgpack.Unpacker(encoding=encodings[1], use_list=False)
 
     def close(self):
+        self._transport._loop.detach_socket(self._socket)
         self._socket.close()
 
-    def _try_send(self, socket):
+    def _try_send(self, sock):
         while self._outchunks:
             try:
                 sent = self._socket.send(self._outchunks[0])
                 if sent == -1:
-                    self.close()
+                    self.on_error(sock)
                     return
                 self._outchunks[0] = self._outchunks[0][sent:]
                 if len(self._outchunks[0]) == 0:
@@ -30,7 +31,7 @@ class BaseSocket(object):
                 if e.args[0] in (errno.EWOULDBLOCK, errno.EAGAIN):
                     break
                 else:
-                    self.on_error()
+                    self.on_error(sock)
                     return
         # when everything is done, disconnect the send loop
         self._transport._loop.detach_socket(self._socket)
@@ -110,7 +111,7 @@ class ClientSocket(BaseSocket):
         if data:
             self.on_read(data)
         else:
-            self.on_close()
+            self.on_error(sock)
 
     def on_writable(self, socket):
         """ Called when the socket becomes connected and ready to write """
@@ -120,10 +121,11 @@ class ClientSocket(BaseSocket):
     def on_error(self, socket):
         if self._connecting:
             self.on_connect_failed()
+            return
+        self.close()
         self.on_close()
 
     def on_close(self):
-        self._transport._loop.detach_socket(self._socket)
         self._transport.on_close(self)
 
     def on_response(self, msgid, error, result):
@@ -158,7 +160,7 @@ class ClientTransport(object):
 
     def close(self):
         for sock in self._sockets:
-            sock.on_close()
+            sock.close()
 
         self._connecting = 0
         self._pending = []
@@ -199,10 +201,10 @@ class ServerSocket(BaseSocket):
         self._transport = transport
         self._transport._loop.attach_socket(self._socket, self.on_available, None, self.on_error)
 
-    def on_available(self, socket):
+    def on_available(self, sock):
         data = None
         try:
-            data = socket.recv(1024)
+            data = sock.recv(1024)
         except socket.error as e:
             if e.args[0] not in (errno.EWOULDBLOCK, errno.EAGAIN):
                 self.on_error()
@@ -211,13 +213,13 @@ class ServerSocket(BaseSocket):
         if data:
             self.on_read(data)
         else:
-            self.on_close()
+            self.on_error(sock)
 
     def on_error(self, socket):
+        self.close()
         self.on_close()
 
     def on_close(self):
-        self._transport._loop.detach_socket(self._socket)
         self._listener.on_close(self)
 
     def on_request(self, msgid, method, param):
@@ -228,8 +230,9 @@ class ServerSocket(BaseSocket):
 
 class ServerListener(object):
     def __init__(self, transport):
-        self._transport = transport
-        self._sockets = []
+        self._transport = transport	# parent transport
+        self._socket = None		# listening socket
+        self._sockets = []		# connected sockets
 
     def listen(self, address):
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -248,10 +251,10 @@ class ServerListener(object):
             self._sockets.remove(serverSocket)
 
     def close(self):
-        sockets = self._sockets[:]
-        for sock in sockets:
-            sock.on_close()
+        for sock in self._sockets:
+            sock.close()
         self._sockets = []
+        self._socket.close()
 
 class ServerTransport(object):
     def __init__(self, address, encodings=('utf-8', None)):
