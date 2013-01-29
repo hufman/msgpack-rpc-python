@@ -38,4 +38,6 @@ Each Runloop adapter should implement these methods::
 """
 
 from . import tornadoloop as tornado
+from . import glibloop as glib
 del(tornadoloop)
+del(glibloop)
