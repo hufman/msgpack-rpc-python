@@ -47,3 +47,25 @@ class Loop(object):
         if self._periodic_callback is not None:
             self._periodic_callback.stop()
         self._periodic_callback = None
+
+    def attach_socket(self, socket, incallback, outcallback=None, errcallback=None):
+        def handler(fd, events):
+            if events & self._ioloop.READ:
+                incallback(socket)
+            if events & self._ioloop.WRITE:
+                outcallback(socket)
+            if events & self._ioloop.ERROR:
+                errcallback(socket)
+
+        captures = 0
+        if incallback:
+            captures = captures | self._ioloop.READ
+        if outcallback:
+            captures = captures | self._ioloop.WRITE
+        if errcallback:
+            captures = captures | self._ioloop.ERROR
+
+        self._ioloop.add_handler(socket.fileno(), handler, captures)
+
+    def detach_socket(self, socket):
+        self._ioloop.remove_handler(socket.fileno())

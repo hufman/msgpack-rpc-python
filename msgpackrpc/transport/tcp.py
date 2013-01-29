@@ -1,22 +1,51 @@
 import msgpack
-from tornado import netutil
-from tornado.iostream import IOStream
-
 import msgpackrpc.message
 from msgpackrpc.error import RPCError, TransportError
 
+import socket
+import errno
 
 class BaseSocket(object):
-    def __init__(self, stream, encodings):
-        self._stream = stream
+    def __init__(self, socket, encodings):
+        self._socket = socket
+        self._outchunks = []
+        self._callback = None
         self._packer = msgpack.Packer(encoding=encodings[0], default=lambda x: x.to_msgpack())
         self._unpacker = msgpack.Unpacker(encoding=encodings[1])
 
     def close(self):
-        self._stream.close()
+        self._socket.close()
+
+    def _try_send(self, socket):
+        while self._outchunks:
+            try:
+                sent = self._socket.send(self._outchunks[0])
+                if sent == -1:
+                    self.close()
+                    return
+                self._outchunks[0] = self._outchunks[0][sent:]
+                if len(self._outchunks[0]) == 0:
+                    self._outchunks.pop(0)
+            except socket.error, e:
+                if e.args[0] in (errno.EWOULDBLOCK, errno.EAGAIN):
+                    break
+                else:
+                    self.on_error()
+                    return
+        # when everything is done, disconnect the send loop
+        self._transport._loop.detach_socket(self._socket)
+        self._transport._loop.attach_socket(self._socket, self.on_available, None, self.on_error)
+        if self._callback:
+            self._callback()
 
     def send_message(self, message, callback=None):
-        self._stream.write(self._packer.pack(message), callback=callback)
+        CHUNK_SIZE = 128 * 1024
+        message = self._packer.pack(message)
+        for i in range(0, len(message), CHUNK_SIZE):
+            self._outchunks.append(message[i:i + CHUNK_SIZE])
+        self._callback = callback
+        self._transport._loop.detach_socket(self._socket)
+        self._transport._loop.attach_socket(self._socket, self.on_available, self._try_send, self.on_error)
 
     def on_read(self, data):
         self._unpacker.feed(data)
@@ -49,27 +78,56 @@ class BaseSocket(object):
 
 
 class ClientSocket(BaseSocket):
-    def __init__(self, stream, transport, encodings):
-        BaseSocket.__init__(self, stream, encodings)
+    def __init__(self, transport, encodings):
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._socket.setblocking(False)
+        BaseSocket.__init__(self, self._socket, encodings)
         self._transport = transport
-        self._stream.set_close_callback(self.on_close)
+        self._transport._loop.attach_socket(self._socket, self.on_available, self.on_writable, self.on_error)
 
     def connect(self):
-        self._stream.connect(self._transport._address.unpack(), self.on_connect)
+        self._connecting = True
+        try:
+            self._socket.connect(self._transport._address.unpack())
+        except socket.error, e:
+            if e.args[0] not in (errno.EINPROGRESS, errno.EWOULDBLOCK):
+                self.on_error()
 
     def on_connect(self):
-        self._stream.read_until_close(self.on_read, self.on_read)
+        self._connecting = False
         self._transport.on_connect(self)
 
     def on_connect_failed(self):
         self._transport.on_connect_failed(self)
 
+    def on_available(self, sock):
+        try:
+            data = sock.recv(1024)
+        except socket.error, e:
+            if e.args[0] not in (errno.EWOULDBLOCK, errno.EAGAIN):
+                self.on_error(sock)
+                return
+        if data:
+            self.on_read(data)
+        else:
+            self.on_close()
+
+    def on_writable(self, socket):
+        """ Called when the socket becomes connected and ready to write """
+        if self._connecting:
+            self.on_connect()
+
+    def on_error(self, socket):
+        if self._connecting:
+            self.on_connect_failed()
+        self.on_close()
+
     def on_close(self):
+        self._transport._loop.detach_socket(self._socket)
         self._transport.on_close(self)
 
     def on_response(self, msgid, error, result):
         self._transport._session.on_response(msgid, error, result)
-
 
 class ClientTransport(object):
     def __init__(self, session, address, reconnect_limit, encodings=('utf-8', None)):
@@ -77,6 +135,7 @@ class ClientTransport(object):
         self._address = address
         self._encodings = encodings
         self._reconnect_limit = reconnect_limit;
+        self._loop = self._session._loop
 
         self._connecting = 0
         self._pending = []
@@ -94,13 +153,12 @@ class ClientTransport(object):
             sock.send_message(message, callback)
 
     def connect(self):
-        stream = IOStream(self._address.socket(), io_loop=self._session._loop._ioloop)
-        socket = ClientSocket(stream, self, self._encodings)
-        socket.connect();
+        client = ClientSocket(self, self._encodings)
+        client.connect();
 
     def close(self):
         for sock in self._sockets:
-            sock.close()
+            sock.on_close()
 
         self._connecting = 0
         self._pending = []
@@ -135,13 +193,32 @@ class ClientTransport(object):
 
 
 class ServerSocket(BaseSocket):
-    def __init__(self, stream, transport, encodings):
-        BaseSocket.__init__(self, stream, encodings)
+    def __init__(self, socket, listener, transport, encodings):
+        BaseSocket.__init__(self, socket, encodings)
+        self._listener = listener
         self._transport = transport
-        self._stream.read_until_close(self.on_read, self.on_read)
+        self._transport._loop.attach_socket(self._socket, self.on_available, None, self.on_error)
+
+    def on_available(self, socket):
+        data = None
+        try:
+            data = socket.recv(1024)
+        except socket.error, e:
+            if e.args[0] not in (errno.EWOULDBLOCK, errno.EAGAIN):
+                self.on_error()
+                return
+
+        if data:
+            self.on_read(data)
+        else:
+            self.on_close()
+
+    def on_error(self, socket):
+        self.on_close()
 
     def on_close(self):
-        self._transport.on_close(self)
+        self._transport._loop.detach_socket(self._socket)
+        self._listener.on_close(self)
 
     def on_request(self, msgid, method, param):
         self._transport._server.on_request(self, msgid, method, param)
@@ -149,16 +226,32 @@ class ServerSocket(BaseSocket):
     def on_notify(self, method, param):
         self._transport._server.on_notify(method, param)
 
-
-class MessagePackServer(netutil.TCPServer):
-    def __init__(self, transport, io_loop=None, encodings=None):
+class ServerListener(object):
+    def __init__(self, transport):
         self._transport = transport
-        self._encodings = encodings
-        netutil.TCPServer.__init__(self, io_loop=io_loop)
+        self._sockets = []
 
-    def handle_stream(self, stream, address):
-        ServerSocket(stream, self._transport, self._encodings)
+    def listen(self, address):
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._socket.bind(("0.0.0.0", address.port))
+        self._socket.setblocking(0)
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._socket.listen(5)
+        self._transport._loop.attach_socket(self._socket, self.accept, None, None)
 
+    def accept(self, socket):
+        client,address = socket.accept()
+        self._sockets.append(ServerSocket(client, self, self._transport, self._transport._encodings))
+
+    def on_close(self, serverSocket):
+        if serverSocket in self._sockets:
+            self._sockets.remove(serverSocket)
+
+    def close(self):
+        sockets = self._sockets[:]
+        for sock in sockets:
+            sock.on_close()
+        self._sockets = []
 
 class ServerTransport(object):
     def __init__(self, address, encodings=('utf-8', None)):
@@ -167,8 +260,9 @@ class ServerTransport(object):
 
     def listen(self, server):
         self._server = server;
-        self._mp_server = MessagePackServer(self, io_loop=self._server._loop._ioloop, encodings=self._encodings)
-        self._mp_server.listen(self._address.port)
+        self._loop = self._server._loop
+        self._listener = ServerListener(self)
+        self._listener.listen(self._address)
 
     def close(self):
-        self._mp_server.stop()
+        self._listener.close()
