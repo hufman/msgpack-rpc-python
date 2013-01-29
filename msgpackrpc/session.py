@@ -33,14 +33,26 @@ class Session(object):
         self._generator = _NoSyncIDGenerator()
         self._request_table = {}
 
+        for name in ['call', 'call_async', 'notify']:
+            setattr(self, name, self._callable(self, "real_"+name))
+
     @property
     def address(self):
         return self._address
 
-    def call(self, method, *args):
+    class _callable(object):
+        def __init__(self, session, name):
+            self._session = session
+            self._name = name
+        def __call__(self, method, *args):
+            return getattr(self._session, self._name)(method, *args)
+        def __getattr__(self, name):
+            return lambda *args:getattr(self._session, self._name)(name, *args)
+
+    def real_call(self, method, *args):
         return self.send_request(method, args).get()
 
-    def call_async(self, method, *args):
+    def real_call_async(self, method, *args):
         return self.send_request(method, args)
 
     def send_request(self, method, args):
@@ -51,7 +63,7 @@ class Session(object):
         self._transport.send_message([message.REQUEST, msgid, method, args])
         return future
 
-    def notify(self, method, *args):
+    def real_notify(self, method, *args):
         def callback():
             self._loop.stop()
         self._transport.send_message([message.NOTIFY, method, args], callback=callback)
