@@ -9,6 +9,8 @@ import helper
 import msgpackrpc
 from msgpackrpc import error
 
+from msgpackrpc.transport import tcp as transport
+from msgpackrpc.loop import tornado as loop
 
 class TestMessagePackRPC(unittest.TestCase):
     ENABLE_TIMEOUT_TEST = False
@@ -78,7 +80,7 @@ class TestMessagePackRPC(unittest.TestCase):
             server.start()
             server.close()
 
-        self._server = msgpackrpc.Server(TestMessagePackRPC.TestServer())
+        self._server = msgpackrpc.Server(TestMessagePackRPC.TestServer(), loop=loop.Loop(), builder=transport)
         self._server.listen(self._address)
         self._thread = threading.Thread(target=_start_server, args=(self._server,))
 
@@ -87,7 +89,7 @@ class TestMessagePackRPC(unittest.TestCase):
         lock.acquire()
         lock.acquire()   # wait for the server to start
 
-        self._client = msgpackrpc.Client(self._address, unpack_encoding='utf-8')
+        self._client = msgpackrpc.Client(self._address, unpack_encoding='utf-8', loop=loop.Loop(), builder=transport)
         return self._client;
 
     def tearDown(self):
@@ -193,4 +195,14 @@ if __name__ == '__main__':
     except:
         pass
 
+    if '--transport' in sys.argv:
+        index = sys.argv.index('--transport')
+        transport = __import__("msgpackrpc.transport.%s"%sys.argv[index+1], fromlist=["msgpackrpc.transport"])
+        sys.argv.pop(index)
+        sys.argv.pop(index)
+    if '--loop' in sys.argv:
+        index = sys.argv.index('--loop')
+        loop = __import__("msgpackrpc.loop.%sloop"%sys.argv[index+1], fromlist=["msgpackrpc.loop"])
+        sys.argv.pop(index)
+        sys.argv.pop(index)
     unittest.main()
