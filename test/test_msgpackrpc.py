@@ -98,6 +98,17 @@ class TestMessagePackRPC(unittest.TestCase):
         self.assertEqual(result2, 3, "'sum' result is incorrect")
         self.assertIsNone(result3, "'nil' result is incorrect")
 
+    def test_magic_call(self):
+        client = self.setup_env();
+
+        result1 = client.call.hello()
+        result2 = client.call.sum(1, 2)
+        result3 = client.call.nil()
+
+        self.assertEqual(result1, "world", "'hello' result is incorrect")
+        self.assertEqual(result2, 3, "'sum' result is incorrect")
+        self.assertIsNone(result3, "'nil' result is incorrect")
+
     def test_call_userdefined_arg(self):
         client = self.setup_env();
 
@@ -127,6 +138,20 @@ class TestMessagePackRPC(unittest.TestCase):
         self.assertEqual(future2.result, 3, "'sum' result is incorrect in call_async")
         self.assertIsNone(future3.result, "'nil' result is incorrect in call_async")
 
+    def test_call_async_magic(self):
+        client = self.setup_env();
+
+        future1 = client.call_async.hello()
+        future2 = client.call_async.sum(1, 2)
+        future3 = client.call_async.nil()
+        future1.join()
+        future2.join()
+        future3.join()
+
+        self.assertEqual(future1.result, "world", "'hello' result is incorrect in call_async")
+        self.assertEqual(future2.result, 3, "'sum' result is incorrect in call_async")
+        self.assertIsNone(future3.result, "'nil' result is incorrect in call_async")
+
     def test_notify(self):
         client = self.setup_env();
 
@@ -135,6 +160,19 @@ class TestMessagePackRPC(unittest.TestCase):
             client.notify('hello')
             client.notify('sum', 1, 2)
             client.notify('nil')
+        except:
+            result = False
+
+        self.assertTrue(result)
+
+    def test_notify_magic(self):
+        client = self.setup_env();
+
+        result = True
+        try:
+            client.notify.hello()
+            client.notify.sum(1, 2)
+            client.notify.nil()
         except:
             result = False
 
