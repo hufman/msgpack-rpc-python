@@ -26,7 +26,7 @@ class BaseSocket(object):
                 self._outchunks[0] = self._outchunks[0][sent:]
                 if len(self._outchunks[0]) == 0:
                     self._outchunks.pop(0)
-            except socket.error, e:
+            except socket.error as e:
                 if e.args[0] in (errno.EWOULDBLOCK, errno.EAGAIN):
                     break
                 else:
@@ -89,7 +89,7 @@ class ClientSocket(BaseSocket):
         self._connecting = True
         try:
             self._socket.connect(self._transport._address.unpack())
-        except socket.error, e:
+        except socket.error as e:
             if e.args[0] not in (errno.EINPROGRESS, errno.EWOULDBLOCK):
                 self.on_error()
 
@@ -103,7 +103,7 @@ class ClientSocket(BaseSocket):
     def on_available(self, sock):
         try:
             data = sock.recv(1024)
-        except socket.error, e:
+        except socket.error as e:
             if e.args[0] not in (errno.EWOULDBLOCK, errno.EAGAIN):
                 self.on_error(sock)
                 return
@@ -203,7 +203,7 @@ class ServerSocket(BaseSocket):
         data = None
         try:
             data = socket.recv(1024)
-        except socket.error, e:
+        except socket.error as e:
             if e.args[0] not in (errno.EWOULDBLOCK, errno.EAGAIN):
                 self.on_error()
                 return
