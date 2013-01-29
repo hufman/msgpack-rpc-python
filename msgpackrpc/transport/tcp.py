@@ -11,7 +11,7 @@ class BaseSocket(object):
         self._outchunks = []
         self._callback = None
         self._packer = msgpack.Packer(encoding=encodings[0], default=lambda x: x.to_msgpack())
-        self._unpacker = msgpack.Unpacker(encoding=encodings[1])
+        self._unpacker = msgpack.Unpacker(encoding=encodings[1], use_list=False)
 
     def close(self):
         self._socket.close()
