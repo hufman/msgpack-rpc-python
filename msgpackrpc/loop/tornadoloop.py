@@ -1,4 +1,3 @@
-from tornado import ioloop
 
 class Loop(object):
     """\
@@ -7,9 +6,15 @@ class Loop(object):
 
     @staticmethod
     def instance():
-        return Loop(ioloop.IOLoop.instance())
+        from tornado import ioloop
+        return Loop(ioloop.IOLoop())
 
     def __init__(self, loop=None):
+        """\
+        Creates a wrapper around the Tornado IOLoop structure
+        Pass in an existing IOLoop if you want, otherwise it will use its own
+        """
+        from tornado import ioloop
         self._ioloop = loop or ioloop.IOLoop()
         self._periodic_callback = None
 
@@ -17,7 +22,6 @@ class Loop(object):
         """\
         Starts the Tornado's ioloop if it's not running.
         """
-
         if not self._ioloop.running():
             self._ioloop.start()
 
@@ -25,7 +29,6 @@ class Loop(object):
         """\
         Stops the Tornado's ioloop if it's running.
         """
-
         if self._ioloop.running():
             try:
                 self._ioloop.stop()
@@ -36,6 +39,7 @@ class Loop(object):
         if self._periodic_callback is not None:
             self.detach_periodic_callback()
 
+        from tornado import ioloop
         self._periodic_callback = ioloop.PeriodicCallback(callback, callback_time, self._ioloop)
         self._periodic_callback.start()
 
