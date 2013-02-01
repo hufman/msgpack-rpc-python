@@ -67,6 +67,9 @@ class ClientSocket(BaseSocket):
     def on_close(self):
         self._transport.on_close(self)
 
+    def on_notify(self, method, param):
+        self._transport._session.on_notify(method, param)
+
     def on_response(self, msgid, error, result):
         self._transport._session.on_response(msgid, error, result)
 
@@ -154,11 +157,20 @@ class MessagePackServer(netutil.TCPServer):
     def __init__(self, transport, io_loop=None, encodings=None):
         self._transport = transport
         self._encodings = encodings
+        self._connected_sockets = {}
         netutil.TCPServer.__init__(self, io_loop=io_loop)
 
     def handle_stream(self, stream, address):
-        ServerSocket(stream, self._transport, self._encodings)
+        stream.set_close_callback(lambda:self.on_socket_close(address))
+        self._connected_sockets[address] = ServerSocket(stream, self._transport, self._encodings)
 
+    def send_message(self, message, callback=None):
+        for sock in self._connected_sockets.values():
+            sock.send_message(message, callback)
+
+    def on_socket_close(self, address):
+        if address in self._connected_sockets.keys():
+             del self._connected_sockets[address]
 
 class ServerTransport(object):
     def __init__(self, address, encodings=('utf-8', None)):
@@ -169,6 +181,9 @@ class ServerTransport(object):
         self._server = server;
         self._mp_server = MessagePackServer(self, io_loop=self._server._loop._ioloop, encodings=self._encodings)
         self._mp_server.listen(self._address.port)
+
+    def send_message(self, message, callback=None):
+        self._mp_server.send_message(message, callback)
 
     def close(self):
         self._mp_server.stop()

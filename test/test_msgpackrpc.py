@@ -59,12 +59,18 @@ class TestMessagePackRPC(unittest.TestCase):
             return 'finish!'
 
         def async_result(self):
-            ar = msgpackrpc.server.AsyncResult()
+            ar = msgpackrpc.session.AsyncResult()
             def do_async():
                 sleep(2)
                 ar.set_result("You are async!")
             threading.Thread(target=do_async).start()
             return ar
+
+    class TestClientDispatch(object):
+        def __init__(self):
+            self._called = 0
+        def callback(self):
+            self._called += 1
 
     def setUp(self):
         self._address = msgpackrpc.Address('localhost', helper.unused_port())
@@ -182,6 +188,50 @@ class TestMessagePackRPC(unittest.TestCase):
             self.assertRaises(error.TimeoutError, lambda: client.call('long_exec'))
         else:
             print("Skip test_timeout")
+
+    def test_servernotify_negative(self):
+        """ Make sure that the server does not crash if a non-listening client is connected """
+        client = self.setup_env();
+
+        result = True
+        try:
+            self._server.notify('hello')
+            self._server.notify('sum', 1, 2)
+            self._server.notify('nil')
+        except:
+            result = False
+
+        self.assertTrue(result)
+
+    def test_servernotify(self):
+        client = self.setup_env();
+
+        clientDispatcher = self.TestClientDispatch()
+        client = msgpackrpc.Client(self._address, unpack_encoding='utf-8', dispatcher=clientDispatcher)
+
+        # Set up the check code
+        result = [False]
+        checks = [10]
+        def check():
+            if clientDispatcher._called != 2:
+                checks[0] -= 1
+                if checks[0] == 0:
+                    client._loop.stop()
+                    return False
+            else:
+                client._loop.stop()
+                result[0] = True
+                return False
+            return True
+
+        client.call('hello')   # force the client to connect
+        self._server.notify('callback')
+        self._server.notify('callback')
+        client._loop.attach_periodic_callback(check, 200)
+        client._loop.start()
+        # wait for the check to return
+
+        self.assertTrue(result[0])
 
 
 if __name__ == '__main__':
