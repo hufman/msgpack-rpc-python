@@ -79,3 +79,4 @@ class Loop(object):
         if fd in self._sockets.keys():
             for eventid in self._sockets[fd]:
                 self._glib.source_remove(eventid)
+        del self._sockets[fd]
