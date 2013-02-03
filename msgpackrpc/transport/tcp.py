@@ -5,10 +5,12 @@ from msgpackrpc.error import RPCError, TransportError
 import socket
 import errno
 
+import collections
+
 class BaseSocket(object):
     def __init__(self, socket, encodings):
         self._socket = socket
-        self._outchunks = []
+        self._outchunks = collections.deque()
         self._callback = None
         self._packer = msgpack.Packer(encoding=encodings[0], default=lambda x: x.to_msgpack())
         self._unpacker = msgpack.Unpacker(encoding=encodings[1], use_list=False)
@@ -20,19 +22,20 @@ class BaseSocket(object):
     def _try_send(self, sock):
         while self._outchunks:
             try:
-                sent = self._socket.send(self._outchunks[0])
+                data = self._outchunks.popleft()
+                sent = self._socket.send(data)
                 if sent == -1:
                     self.on_error(sock)
                     return
-                self._outchunks[0] = self._outchunks[0][sent:]
-                if len(self._outchunks[0]) == 0:
-                    self._outchunks.pop(0)
+                data = data[sent:]
             except socket.error as e:
                 if e.args[0] in (errno.EWOULDBLOCK, errno.EAGAIN):
                     break
                 else:
                     self.on_error(sock)
                     return
+            if len(data) != 0:
+                self._outchunks.appendleft(data)
         # when everything is done, disconnect the send loop
         self._transport._loop.detach_socket(self._socket)
         self._transport._loop.attach_socket(self._socket, self.on_available, None, self.on_error)
