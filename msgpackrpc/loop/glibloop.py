@@ -1,3 +1,4 @@
+import collections
 
 class Loop(object):
     """\
@@ -13,6 +14,7 @@ class Loop(object):
         glib.threads_init()
         self._glib = glib
         self._sockets = {}
+        self._stoppings = collections.deque()
         self._running = False
         self._periodic_callback = None
         pass
@@ -25,13 +27,20 @@ class Loop(object):
            self._running = True
         while self._running:
             self._glib.MainLoop().get_context().iteration(True)
+        contents = True
+        while contents:
+            try:
+                self._glib.source_remove(self._stoppings.pop())
+            except IndexError:
+                contents = False
         
     def stop(self):
         """\
         Stop blocking on the glib loop
         """
         self._running = False
-        self._glib.idle_add(lambda:False)
+        id = self._glib.idle_add(lambda:False)
+        self._stoppings.append(id)
 
     def attach_periodic_callback(self, callback, callback_time):
         if self._periodic_callback is not None:
